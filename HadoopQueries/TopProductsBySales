@@ -1,0 +1,134 @@
+  GNU nano 2.0.9                                                                                                                                                                                                                                                                                                        File: TopProductsBySales.java                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+
+import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryMXBean;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.DoubleWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+
+public class TopProductsBySales {
+
+    public static enum Counter {
+        RECORD_COUNT, MALFORMED_RECORDS
+    }
+
+    public static class SalesMapper extends Mapper<Object, Text, Text, DoubleWritable> {
+        private Text productName = new Text();
+        private DoubleWritable salesAmount = new DoubleWritable();
+        private int lineNumber = 0;
+
+        @Override
+        protected void setup(Context context) throws IOException, InterruptedException {
+            // Log initialization for debugging
+            System.out.println("Mapper setup initialized");
+        }
+
+	public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            // Skip the header row
+            if (lineNumber == 0) {
+                lineNumber++;
+                return;
+            }
+
+            // Split the CSV line into fields
+            String[] fields = value.toString().split(",");
+            if (fields.length < 3) {
+                // Increment malformed record counter for rows with insufficient columns
+                context.getCounter(Counter.MALFORMED_RECORDS).increment(1);
+                System.err.println("Malformed record: " + value.toString());
+                return;
+            }
+
+            try {
+                // Assuming the product_name is at index 1 and sales amount is at index 2
+                String product = fields[2].trim();
+                double sales = Double.parseDouble(fields[50].trim());
+
+                productName.set(product);
+                salesAmount.set(sales);
+                context.write(productName, salesAmount);
+
+                context.getCounter(Counter.RECORD_COUNT).increment(1);
+            } catch (Exception e) {
+                // Handle any malformed data
+                System.err.println("Error processing record: " + value.toString());
+                context.getCounter(Counter.MALFORMED_RECORDS).increment(1);
+            }
+            lineNumber++;
+        }
+    }
+
+    public static class SalesReducer extends Reducer<Text, DoubleWritable, Text, DoubleWritable> {
+        private DoubleWritable totalSales = new DoubleWritable();
+
+        @Override
+        protected void setup(Context context) throws IOException, InterruptedException {
+            // Log initialization for debugging
+            System.out.println("Reducer setup initialized");
+        }
+
+	public void reduce(Text key, Iterable<DoubleWritable> values, Context context) throws IOException, InterruptedException {
+            double sum = 0;
+            for (DoubleWritable val : values) {
+                sum += val.get();
+            }
+            totalSales.set(sum);
+            context.write(key, totalSales);
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        if (args.length < 2) {
+            System.err.println("Usage: TopProductsBySales <input path> <output path>");
+            System.exit(-1);
+        }
+
+	long startTime = System.nanoTime();
+        Configuration conf = new Configuration();
+        Job job = Job.getInstance(conf, "Top Products by Sales");
+        job.setJarByClass(TopProductsBySales.class);
+        job.setMapperClass(SalesMapper.class);
+        job.setCombinerClass(SalesReducer.class);
+        job.setReducerClass(SalesReducer.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(DoubleWritable.class);
+        FileInputFormat.addInputPath(job, new Path(args[0]));
+        FileOutputFormat.setOutputPath(job, new Path(args[1]));
+
+        boolean jobStatus = job.waitForCompletion(true);
+        long endTime = System.nanoTime();
+        double duration = (endTime - startTime) / 1e9d;
+
+
+        System.out.println("Execution Time: " + duration + " seconds");
+        long recordCount = job.getCounters().findCounter(Counter.RECORD_COUNT).getValue();
+        long malformedRecords = job.getCounters().findCounter(Counter.MALFORMED_RECORDS).getValue();
+        double throughput = recordCount / duration;
+        System.out.println("Processed Records: " + recordCount);
+        System.out.println("Malformed Records: " + malformedRecords);
+        System.out.println("Throughput: " + throughput + " records per second");
+
+        Runtime runtime = Runtime.getRuntime();
+        double usedMemory = (runtime.totalMemory() - runtime.freeMemory()) / (1024.0 * 1024.0);
+        System.out.println("Used Memory: " + usedMemory + " MB");
+
+        MemoryMXBean memoryMXBean = ManagementFactory.getMemoryMXBean();
+        double usedHeapMemory = memoryMXBean.getHeapMemoryUsage().getUsed() / (1024.0 * 1024.0);
+        double usedNonHeapMemory = memoryMXBean.getNonHeapMemoryUsage().getUsed() / (1024.0 * 1024.0);
+        System.out.println("Used Heap Memory: " + usedHeapMemory + " MB");
+        System.out.println("Used Non-Heap Memory: " + usedNonHeapMemory + " MB");
+
+        System.exit(jobStatus ? 0 : 1);
+    }
+}
+
+
+
